@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wastewater Monitoring Dashboard (Diff Analysis)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Kanit', sans-serif; background-color: #f8fafc; }
+        .card { background: white; border-radius: 1rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+        .status-pass { background-color: #dcfce7; color: #166534; }
+        .status-fail { background-color: #fee2e2; color: #991b1b; }
+        .gradient-header { background: linear-gradient(135deg, #0f172a 0%, #1e40af 100%); }
+        #syncLoader { display: none; }
+        .chart-container { position: relative; height: 250px; width: 100%; }
+    </style>
+</head>
+<body class="p-4 md:p-8 text-slate-800">
+
+    <div class="max-w-7xl mx-auto">
+        <!-- Header: ส่วนที่ใช้เปลี่ยนชื่อระบบ -->
+        <header class="gradient-header p-6 rounded-2xl text-white mb-8 shadow-lg flex flex-col md:flex-row justify-between items-center gap-4">
+            <div>
+                <!-- แก้ไขชื่อหลักที่นี่ -->
+                <h1 class="text-2xl md:text-3xl font-bold">ระบบตรวจสอบน้ำทิ้ง (Diff Graph Analysis)</h1>
+                <!-- แก้ไขคำอธิบายรองที่นี่ -->
+                <p class="opacity-90 mt-1">วิเคราะห์ประสิทธิภาพการบำบัดด้วยค่าส่วนต่าง TDS</p>
+            </div>
+            <button id="syncBtn" onclick="fetchFromSheet()" class="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold shadow-md hover:bg-blue-700 transition flex items-center gap-2">
+                <span id="syncLoader" class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></span>
+                <span>🔄 ดึงข้อมูลล่าสุด</span>
+            </button>
+        </header>
+
+        <!-- KPI Cards -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <div class="card p-5 border-b-4 border-blue-500 text-center">
+                <p class="text-gray-500 text-xs uppercase tracking-wider">บันทึกทั้งหมด</p>
+                <p id="totalRecords" class="text-2xl font-bold text-blue-600">0</p>
+            </div>
+            <div class="card p-5 border-b-4 border-green-500 text-center">
+                <p class="text-gray-500 text-xs uppercase tracking-wider">ระบบอาคาร</p>
+                <p id="buildingStatus" class="text-lg font-semibold text-green-600">รอข้อมูล</p>
+            </div>
+            <div class="card p-5 border-b-4 border-purple-500 text-center">
+                <p class="text-gray-500 text-xs uppercase tracking-wider">ระบบไตเทียม</p>
+                <p id="dialysisStatus" class="text-lg font-semibold text-purple-600">รอข้อมูล</p>
+            </div>
+            <div class="card p-5 border-b-4 border-yellow-500 text-center">
+                <p class="text-gray-500 text-xs uppercase tracking-wider">คลอรีนล่าสุด</p>
+                <p id="avgChlorine" class="text-2xl font-bold text-yellow-600">0.00</p>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
+            <!-- Form Card -->
+            <div class="card p-6 lg:col-span-1">
+                <h2 class="text-xl font-semibold mb-5 text-blue-800 flex items-center gap-2">
+                    📝 บันทึกข้อมูล
+                </h2>
+                <form id="dataForm" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">วันที่และเวลา</label>
+                        <input type="datetime-local" id="recordDateTime" class="mt-1 block w-full border-gray-300 rounded-lg p-2 bg-slate-50 border focus:ring-2 focus:ring-blue-500 outline-none" required>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">ประเภทระบบ</label>
+                        <select id="systemType" class="mt-1 block w-full border-gray-300 rounded-lg p-2 bg-slate-50 border focus:ring-2 focus:ring-blue-500 outline-none" required>
+                            <option value="building">ระบบบำบัดน้ำเสียอาคาร</option>
+                            <option value="dialysis">ระบบบำบัดน้ำเสียไตเทียม</option>
+                        </select>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">TDS เข้า (ppm)</label>
+                            <input type="number" id="tdsIn" class="mt-1 block w-full border-gray-300 rounded-lg p-2 bg-slate-50 border focus:ring-2 focus:ring-blue-500" required>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">TDS ออก (ppm)</label>
+                            <input type="number" id="tdsOut" class="mt-1 block w-full border-gray-300 rounded-lg p-2 bg-slate-50 border focus:ring-2 focus:ring-blue-500" required>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">คลอรีน (0.5 - 0.9 mg/L)</label>
+                        <input type="number" step="0.1" id="chlorine" class="mt-1 block w-full border-gray-300 rounded-lg p-2 bg-slate-50 border focus:ring-2 focus:ring-blue-500" required>
+                    </div>
+                    <button type="submit" id="submitBtn" class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg mt-2">
+                        บันทึกลง Cloud
+                    </button>
+                </form>
+            </div>
+
+            <!-- Graphs Container -->
+            <div class="lg:col-span-2 space-y-6">
+                <!-- TDS Diff Graph -->
+                <div class="card p-6 border-t-4 border-blue-500">
+                    <h3 class="text-lg font-semibold mb-4 text-slate-700 flex items-center justify-between">
+                        <span>📊 ส่วนต่าง TDS (TDS Out - TDS In)</span>
+                        <span class="text-xs font-normal text-slate-400 italic">* ค่าบวกหมายถึง TDS ขาออกสูงกว่าขาเข้า</span>
+                    </h3>
+                    <div class="chart-container">
+                        <canvas id="tdsDiffChart"></canvas>
+                    </div>
+                </div>
+                <!-- Chlorine Graph -->
+                <div class="card p-6 border-t-4 border-yellow-500">
+                    <h3 class="text-lg font-semibold mb-4 text-slate-700">
+                        💧 ระดับคลอรีนอิสระ (mg/L)
+                    </h3>
+                    <div class="chart-container">
+                        <canvas id="clChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Table -->
+        <div class="card overflow-hidden">
+            <div class="p-6 border-b flex flex-col md:flex-row justify-between items-center bg-gray-50 gap-2">
+                <h2 class="text-xl font-semibold text-slate-800">ประวัติบันทึกข้อมูลล่าสุด</h2>
+                <div id="statusText" class="text-sm text-slate-500 italic text-right">กำลังเชื่อมต่อ...</div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-slate-100 text-xs uppercase text-slate-600 tracking-wider">
+                            <th class="p-4 border-b">วัน/เวลา</th>
+                            <th class="p-4 border-b">ระบบ</th>
+                            <th class="p-4 border-b">TDS เข้า/ออก</th>
+                            <th class="p-4 border-b">ส่วนต่าง (Diff)</th>
+                            <th class="p-4 border-b">คลอรีน</th>
+                            <th class="p-4 border-b text-center">ผล</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dataTableBody" class="text-sm text-slate-700"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzrsl1bWo0lfsIzPiKVDTchIUGaz9mYYxpsUrr69Qtd9vTe8fb5qXYdbqYjQ5SPI2g8Aw/exec"; 
+        
+        let logs = [];
+        let tdsDiffChart = null;
+        let clChart = null;
+
+        function setDefaultDateTime() {
+            const now = new Date();
+            now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+            document.getElementById('recordDateTime').value = now.toISOString().slice(0, 16);
+        }
+
+        function parseSheetDate(dateStr) {
+            try {
+                const date = new Date(dateStr);
+                if (!isNaN(date.getTime())) return date;
+                const parts = dateStr.match(/(\d+)/g);
+                if (parts && parts.length >= 3) {
+                    return new Date(parts[2], parts[1]-1, parts[0], parts[3]||0, parts[4]||0);
+                }
+                return new Date();
+            } catch (e) { return new Date(); }
+        }
+
+        function formatDisplayDate(date) {
+            return date.toLocaleString('th-TH', {
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', hour12: false
+            });
+        }
+
+        function updateCharts() {
+            const chartData = [...logs].slice(0, 10).reverse(); 
+            const labels = chartData.map(d => d.timestamp.split(' ')[1]); 
+            
+            const tdsCtx = document.getElementById('tdsDiffChart').getContext('2d');
+            if (tdsDiffChart) tdsDiffChart.destroy();
+            tdsDiffChart = new Chart(tdsCtx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'ส่วนต่าง TDS (ppm)',
+                        data: chartData.map(d => d.diff),
+                        backgroundColor: chartData.map(d => {
+                            if (d.typeKey === 'building' && d.diff > 500) return '#ef4444'; 
+                            return '#3b82f6';
+                        }),
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { 
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: (context) => ` ส่วนต่าง: ${context.raw} ppm`
+                            }
+                        }
+                    },
+                    scales: { 
+                        y: { 
+                            beginAtZero: true,
+                            title: { display: true, text: 'ส่วนต่าง (ppm)' }
+                        } 
+                    }
+                }
+            });
+
+            const clCtx = document.getElementById('clChart').getContext('2d');
+            if (clChart) clChart.destroy();
+            clChart = new Chart(clCtx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'คลอรีน',
+                        data: chartData.map(d => d.chlorine),
+                        borderColor: '#fbbf24',
+                        backgroundColor: 'rgba(251, 191, 36, 0.1)',
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 5,
+                        pointBackgroundColor: chartData.map(d => (d.chlorine >= 0.5 && d.chlorine <= 0.9) ? '#fbbf24' : '#ef4444')
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: { 
+                        y: { 
+                            min: 0, 
+                            max: 1.5,
+                            title: { display: true, text: 'mg/L' },
+                            grid: {
+                                color: (ctx) => (ctx.tick.value === 0.5 || ctx.tick.value === 0.9) ? 'rgba(239, 68, 68, 0.2)' : 'rgba(0,0,0,0.05)'
+                            }
+                        } 
+                    }
+                }
+            });
+        }
+
+        async function fetchFromSheet() {
+            if (!WEB_APP_URL || WEB_APP_URL.includes("ใส่_URL")) return;
+            document.getElementById('syncLoader').style.display = 'block';
+            try {
+                const response = await fetch(`${WEB_APP_URL}?action=read`);
+                const data = await response.json();
+                if (data && data.length > 0) {
+                    logs = data.map(row => {
+                        const dateObj = parseSheetDate(row[0]);
+                        return {
+                            timestamp: formatDisplayDate(dateObj),
+                            type: row[1],
+                            tdsIn: row[2],
+                            tdsOut: row[3],
+                            diff: row[4],
+                            chlorine: row[5],
+                            isPass: row[6] === "ผ่าน" || row[6] === true,
+                            typeKey: row[1] === "อาคาร" ? "building" : "dialysis",
+                            rawDate: dateObj
+                        };
+                    });
+                    logs.sort((a, b) => b.rawDate - a.rawDate);
+                    updateUI();
+                    updateCharts();
+                    document.getElementById('statusText').innerText = `อัปเดตเมื่อ: ${new Date().toLocaleTimeString('th-TH')}`;
+                }
+            } catch (e) { console.error("Error:", e); }
+            finally { document.getElementById('syncLoader').style.display = 'none'; }
+        }
+
+        async function sendToSheet(data) {
+            const btn = document.getElementById('submitBtn');
+            btn.disabled = true; btn.innerText = "กำลังบันทึก...";
+            try {
+                await fetch(WEB_APP_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    body: JSON.stringify(data)
+                });
+                setTimeout(fetchFromSheet, 2000);
+            } catch (e) { alert("เกิดข้อผิดพลาดในการส่งข้อมูล"); }
+            finally { btn.disabled = false; btn.innerText = "บันทึกลง Cloud"; }
+        }
+
+        document.getElementById('dataForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const dateInput = document.getElementById('recordDateTime').value;
+            const type = document.getElementById('systemType').value;
+            const tdsIn = parseFloat(document.getElementById('tdsIn').value);
+            const tdsOut = parseFloat(document.getElementById('tdsOut').value);
+            const chlorine = parseFloat(document.getElementById('chlorine').value);
+            const diff = tdsOut - tdsIn;
+
+            const isPass = type === 'building' 
+                ? (diff <= 500 && chlorine >= 0.5 && chlorine <= 0.9)
+                : (tdsOut <= 1000 && chlorine >= 0.5 && chlorine <= 0.9);
+
+            const dataToSave = {
+                timestamp: new Date(dateInput).toISOString(),
+                type: type === 'building' ? 'อาคาร' : 'ไตเทียม',
+                tdsIn, tdsOut, diff, chlorine,
+                result: isPass ? "ผ่าน" : "ตกเกณฑ์"
+            };
+
+            await sendToSheet(dataToSave);
+            this.reset();
+            setDefaultDateTime();
+        });
+
+        function updateUI() {
+            const tableBody = document.getElementById('dataTableBody');
+            tableBody.innerHTML = logs.map(log => `
+                <tr class="hover:bg-slate-50 border-b">
+                    <td class="p-4 text-xs font-medium text-slate-500">${log.timestamp}</td>
+                    <td class="p-4">
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold ${log.typeKey === 'building' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}">
+                            ${log.type}
+                        </span>
+                    </td>
+                    <td class="p-4 text-xs">${log.tdsIn} / ${log.tdsOut}</td>
+                    <td class="p-4 text-xs font-bold ${log.diff > 500 && log.typeKey === 'building' ? 'text-red-600' : 'text-slate-700'}">${log.diff}</td>
+                    <td class="p-4 text-xs font-bold ${log.chlorine < 0.5 || log.chlorine > 0.9 ? 'text-red-600' : 'text-amber-600'}">${log.chlorine}</td>
+                    <td class="p-4 text-center">
+                        <span class="px-3 py-1 rounded-full text-[10px] font-bold uppercase ${log.isPass ? 'status-pass' : 'status-fail'}">
+                            ${log.isPass ? 'ผ่าน' : 'ตกเกณฑ์'}
+                        </span>
+                    </td>
+                </tr>
+            `).join('');
+
+            document.getElementById('totalRecords').innerText = logs.length;
+            if (logs.length > 0) {
+                const lastB = logs.find(l => l.typeKey === 'building');
+                if (lastB) {
+                    document.getElementById('buildingStatus').innerText = lastB.isPass ? 'ปกติ' : 'ต้องแก้ไข';
+                    document.getElementById('buildingStatus').className = `text-lg font-semibold ${lastB.isPass ? 'text-green-600' : 'text-red-600'}`;
+                }
+                const lastD = logs.find(l => l.typeKey === 'dialysis');
+                if (lastD) {
+                    document.getElementById('dialysisStatus').innerText = lastD.isPass ? 'ปกติ' : 'ต้องแก้ไข';
+                    document.getElementById('dialysisStatus').className = `text-lg font-semibold ${lastD.isPass ? 'text-green-600' : 'text-red-600'}`;
+                }
+                document.getElementById('avgChlorine').innerText = logs[0].chlorine.toFixed(2);
+            }
+        }
+
+        window.onload = () => {
+            setDefaultDateTime();
+            fetchFromSheet();
+        };
+    </script>
+</body>
+</html>
